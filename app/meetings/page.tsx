@@ -26,9 +26,12 @@ export default function MeetingsPage() {
   const [title, setTitle] = useState("");
   const [file, setFile] = useState<File | null>(null);
   const [uploading, setUploading] = useState(false);
-  const [tab, setTab] = useState<"file" | "youtube">("file");
+  const [tab, setTab] = useState<"file" | "youtube" | "bot">("file");
   const [ytUrl, setYtUrl] = useState("");
   const [ytTitle, setYtTitle] = useState("");
+  const [botUrl, setBotUrl] = useState("");
+  const [botTitle, setBotTitle] = useState("");
+  const [botDuration, setBotDuration] = useState("60");
 
   useEffect(() => {
     if (!isPending && !session) router.push("/sign-in");
@@ -78,7 +81,24 @@ export default function MeetingsPage() {
     setUploading(false);
   }
 
-  async function handleYouTube(e: React.FormEvent) {
+  async function handleBot(e: React.FormEvent) {
+    e.preventDefault();
+    if (!botUrl.trim()) return;
+    setUploading(true);
+    const res = await fetch("/api/bot", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ url: botUrl, title: botTitle || undefined, durationMinutes: Number(botDuration) }),
+    });
+    const data = await res.json();
+    setMeetings((prev) => [
+      { id: data.meetingId, title: botTitle || botUrl, status: "processing", progress: 0, createdAt: new Date().toISOString() },
+      ...prev,
+    ]);
+    setBotUrl("");
+    setBotTitle("");
+    setUploading(false);
+  }
     e.preventDefault();
     if (!ytUrl.trim()) return;
     setUploading(true);
@@ -119,13 +139,13 @@ export default function MeetingsPage() {
         <section className="bg-zinc-900 border border-zinc-800 rounded-2xl overflow-hidden">
           {/* Tabs */}
           <div className="flex border-b border-zinc-800">
-            {(["file", "youtube"] as const).map((t) => (
+            {(["file", "youtube", "bot"] as const).map((t) => (
               <button
                 key={t}
                 onClick={() => setTab(t)}
                 className={`px-6 py-3 text-sm font-medium transition ${tab === t ? "text-white border-b-2 border-indigo-500" : "text-zinc-500 hover:text-white"}`}
               >
-                {t === "file" ? "📁 Upload File" : "▶️ YouTube URL"}
+                {t === "file" ? "📁 Upload File" : t === "youtube" ? "▶️ YouTube URL" : "🤖 Join Meeting"}
               </button>
             ))}
           </div>
@@ -174,6 +194,41 @@ export default function MeetingsPage() {
                 />
                 <button type="submit" disabled={!ytUrl.trim() || uploading} className="w-full py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 font-medium transition">
                   {uploading ? "Processing…" : "Extract & Transcribe"}
+                </button>
+              </form>
+            ) : (
+              <form onSubmit={handleBot} className="space-y-4">
+                <p className="text-xs text-zinc-500">The bot will open the meeting in a browser, record audio, transcribe, and send you a summary when done.</p>
+                <input
+                  type="text"
+                  placeholder="Meeting title (optional)"
+                  value={botTitle}
+                  onChange={(e) => setBotTitle(e.target.value)}
+                  className="w-full px-3 py-2 rounded-lg bg-zinc-800 border border-zinc-700 text-white placeholder-zinc-500 focus:outline-none focus:border-indigo-500 transition"
+                />
+                <input
+                  type="url"
+                  required
+                  placeholder="https://meet.google.com/xxx-xxxx-xxx"
+                  value={botUrl}
+                  onChange={(e) => setBotUrl(e.target.value)}
+                  className="w-full px-3 py-2 rounded-lg bg-zinc-800 border border-zinc-700 text-white placeholder-zinc-500 focus:outline-none focus:border-indigo-500 transition"
+                />
+                <div className="flex items-center gap-3">
+                  <label className="text-sm text-zinc-400 whitespace-nowrap">Max duration</label>
+                  <select
+                    value={botDuration}
+                    onChange={(e) => setBotDuration(e.target.value)}
+                    className="flex-1 px-3 py-2 rounded-lg bg-zinc-800 border border-zinc-700 text-white focus:outline-none focus:border-indigo-500 transition"
+                  >
+                    <option value="30">30 minutes</option>
+                    <option value="60">1 hour</option>
+                    <option value="90">1.5 hours</option>
+                    <option value="120">2 hours</option>
+                  </select>
+                </div>
+                <button type="submit" disabled={!botUrl.trim() || uploading} className="w-full py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 font-medium transition">
+                  {uploading ? "Launching bot…" : "🤖 Send Bot to Meeting"}
                 </button>
               </form>
             )}
