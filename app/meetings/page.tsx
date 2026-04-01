@@ -105,6 +105,7 @@ export default function MeetingsPage() {
       <header className="flex items-center justify-between px-6 py-4 border-b border-zinc-800 bg-zinc-900">
         <h1 className="font-bold text-lg">🎙️ MeetingAI</h1>
         <div className="flex items-center gap-4">
+          <Link href="/live" className="text-sm text-red-400 hover:text-red-300 transition font-medium">🔴 Live Meeting</Link>
           <Link href="/chat" className="text-sm text-zinc-400 hover:text-white transition">AI Chat</Link>
           <span className="text-sm text-zinc-400">{session.user.name}</span>
           <button onClick={() => signOut().then(() => router.push("/sign-in"))} className="text-sm text-zinc-500 hover:text-white transition">
