@@ -16,6 +16,7 @@
     "drizzle-kit": "^0.31.10",
     "drizzle-orm": "^0.45.2",
     "langchain": "^1.2.39",
+    "nanoid": "^5.1.7",
     "next": "16.2.2",
     "pg": "^8.20.0",
     "react": "19.2.4",
