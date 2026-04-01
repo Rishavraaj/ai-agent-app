@@ -73,7 +73,7 @@ export default function MeetingsPage() {
     const res = await fetch("/api/meetings/transcribe", { method: "POST", body: fd });
     const data = await res.json();
     setMeetings((prev) => [
-      { id: data.meetingId, title: title || file.name, status: "processing", createdAt: new Date().toISOString() },
+      { id: data.meetingId, title: title || file.name, status: "processing", progress: 0, createdAt: new Date().toISOString() },
       ...prev,
     ]);
     setTitle("");
@@ -99,6 +99,8 @@ export default function MeetingsPage() {
     setBotTitle("");
     setUploading(false);
   }
+
+  async function handleYouTube(e: React.FormEvent) {
     e.preventDefault();
     if (!ytUrl.trim()) return;
     setUploading(true);
@@ -109,7 +111,7 @@ export default function MeetingsPage() {
     });
     const data = await res.json();
     setMeetings((prev) => [
-      { id: data.meetingId, title: ytTitle || ytUrl, status: "processing", createdAt: new Date().toISOString() },
+      { id: data.meetingId, title: ytTitle || ytUrl, status: "processing", progress: 0, createdAt: new Date().toISOString() },
       ...prev,
     ]);
     setYtUrl("");
@@ -175,7 +177,7 @@ export default function MeetingsPage() {
                   {uploading ? "Uploading…" : "Upload & Transcribe"}
                 </button>
               </form>
-            ) : (
+            ) : tab === "youtube" ? (
               <form onSubmit={handleYouTube} className="space-y-4">
                 <input
                   type="text"
