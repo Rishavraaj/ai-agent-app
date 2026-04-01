@@ -12,6 +12,7 @@ import { join } from "path";
 import OpenAI from "openai";
 import { extractMeetingInsights } from "@/lib/meeting-agent";
 import { sendMeetingSummaryEmail } from "@/lib/email";
+import { setProgress } from "@/lib/progress";
 
 const execFileAsync = promisify(execFile);
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
@@ -40,15 +41,14 @@ export async function POST(req: Request) {
     const audioPath = join(tmpDir, "audio.mp3");
 
     try {
+      await setProgress(meetingId, 10);
+
       // Download audio only with yt-dlp
       await execFileAsync("yt-dlp", [
-        "-x",
-        "--audio-format", "mp3",
-        "--audio-quality", "5",
-        "-o", audioPath,
-        "--no-playlist",
-        url,
+        "-x", "--audio-format", "mp3", "--audio-quality", "5",
+        "-o", audioPath, "--no-playlist", url,
       ]);
+      await setProgress(meetingId, 40);
 
       // Get video title if none provided
       let resolvedTitle = meetingTitle;
@@ -63,29 +63,18 @@ export async function POST(req: Request) {
       // Transcribe with Whisper
       const audioBuffer = await readFile(audioPath);
       const audioFile = new File([audioBuffer], "audio.mp3", { type: "audio/mpeg" });
+      const transcription = await openai.audio.transcriptions.create({ file: audioFile, model: "whisper-1" });
+      await setProgress(meetingId, 70);
 
-      const transcription = await openai.audio.transcriptions.create({
-        file: audioFile,
-        model: "whisper-1",
-      });
-
-      const { summary, actionItems } = await extractMeetingInsights(
-        transcription.text,
-        meetingId
-      );
+      const { summary, actionItems } = await extractMeetingInsights(transcription.text, meetingId);
+      await setProgress(meetingId, 90);
 
       await db
         .update(meeting)
-        .set({ transcript: transcription.text, summary, status: "done" })
+        .set({ transcript: transcription.text, summary, status: "done", progress: "100" })
         .where(eq(meeting.id, meetingId));
 
-      await sendMeetingSummaryEmail({
-        to: session.user.email,
-        name: session.user.name,
-        title: resolvedTitle,
-        summary,
-        actionItems,
-      });
+      await sendMeetingSummaryEmail({ to: session.user.email, name: session.user.name, title: resolvedTitle, summary, actionItems });
     } catch (err) {
       console.error("YouTube processing error:", err);
       await db.update(meeting).set({ status: "error" }).where(eq(meeting.id, meetingId));

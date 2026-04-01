@@ -7,6 +7,7 @@ import OpenAI from "openai";
 import { nanoid } from "nanoid";
 import { extractMeetingInsights } from "@/lib/meeting-agent";
 import { sendMeetingSummaryEmail } from "@/lib/email";
+import { setProgress } from "@/lib/progress";
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
@@ -32,19 +33,23 @@ export async function POST(req: Request) {
   // Transcribe with Whisper (non-blocking — process in background)
   (async () => {
     try {
+      await setProgress(meetingId, 10);
+
       const transcription = await openai.audio.transcriptions.create({
         file,
         model: "whisper-1",
       });
+      await setProgress(meetingId, 70);
 
       const { summary, actionItems } = await extractMeetingInsights(
         transcription.text,
         meetingId
       );
+      await setProgress(meetingId, 90);
 
       await db
         .update(meeting)
-        .set({ transcript: transcription.text, summary, status: "done" })
+        .set({ transcript: transcription.text, summary, status: "done", progress: "100" })
         .where(eq(meeting.id, meetingId));
 
       await sendMeetingSummaryEmail({

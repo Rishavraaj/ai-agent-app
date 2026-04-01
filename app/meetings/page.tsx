@@ -8,6 +8,7 @@ type Meeting = {
   id: string;
   title: string;
   status: "pending" | "processing" | "done" | "error";
+  progress: number;
   createdAt: string;
 };
 
@@ -37,6 +38,27 @@ export default function MeetingsPage() {
     if (!session) return;
     fetch("/api/meetings").then((r) => r.json()).then(setMeetings);
   }, [session]);
+
+  // Poll progress for processing meetings every 3s
+  useEffect(() => {
+    const processing = meetings.filter((m) => m.status === "processing");
+    if (!processing.length) return;
+    const interval = setInterval(async () => {
+      const updates = await Promise.all(
+        processing.map((m) =>
+          fetch(`/api/meetings/progress?id=${m.id}`).then((r) => r.json())
+        )
+      );
+      setMeetings((prev) =>
+        prev.map((m) => {
+          const idx = processing.findIndex((p) => p.id === m.id);
+          if (idx === -1) return m;
+          return { ...m, ...updates[idx] };
+        })
+      );
+    }, 3000);
+    return () => clearInterval(interval);
+  }, [meetings]);
 
   async function handleUpload(e: React.FormEvent) {
     e.preventDefault();
@@ -168,17 +190,25 @@ export default function MeetingsPage() {
                 <li key={m.id}>
                   <Link
                     href={`/meetings/${m.id}`}
-                    className="flex items-center justify-between px-5 py-4 bg-zinc-900 border border-zinc-800 rounded-xl hover:border-indigo-500 transition"
+                    className="block px-5 py-4 bg-zinc-900 border border-zinc-800 rounded-xl hover:border-indigo-500 transition"
                   >
-                    <div>
+                    <div className="flex items-center justify-between mb-1">
                       <p className="font-medium">{m.title}</p>
-                      <p className="text-xs text-zinc-500 mt-0.5">
-                        {new Date(m.createdAt).toLocaleString()}
-                      </p>
+                      <span className={`text-sm font-medium capitalize ${STATUS_COLORS[m.status]}`}>
+                        {m.status === "processing" ? `${m.progress ?? 0}%` : m.status}
+                      </span>
                     </div>
-                    <span className={`text-sm font-medium capitalize ${STATUS_COLORS[m.status]}`}>
-                      {m.status}
-                    </span>
+                    {m.status === "processing" && (
+                      <div className="w-full h-1.5 bg-zinc-700 rounded-full overflow-hidden mt-2">
+                        <div
+                          className="h-full bg-indigo-500 rounded-full transition-all duration-500"
+                          style={{ width: `${m.progress ?? 0}%` }}
+                        />
+                      </div>
+                    )}
+                    <p className="text-xs text-zinc-500 mt-1.5">
+                      {new Date(m.createdAt).toLocaleString()}
+                    </p>
                   </Link>
                 </li>
               ))}

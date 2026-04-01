@@ -64,6 +64,7 @@ export const meeting = pgTable("meeting", {
   status: text("status", { enum: ["pending", "processing", "done", "error"] })
     .notNull()
     .default("pending"),
+  progress: text("progress").notNull().default("0"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
