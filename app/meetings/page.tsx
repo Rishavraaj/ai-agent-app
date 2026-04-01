@@ -25,6 +25,9 @@ export default function MeetingsPage() {
   const [title, setTitle] = useState("");
   const [file, setFile] = useState<File | null>(null);
   const [uploading, setUploading] = useState(false);
+  const [tab, setTab] = useState<"file" | "youtube">("file");
+  const [ytUrl, setYtUrl] = useState("");
+  const [ytTitle, setYtTitle] = useState("");
 
   useEffect(() => {
     if (!isPending && !session) router.push("/sign-in");
@@ -53,6 +56,25 @@ export default function MeetingsPage() {
     setUploading(false);
   }
 
+  async function handleYouTube(e: React.FormEvent) {
+    e.preventDefault();
+    if (!ytUrl.trim()) return;
+    setUploading(true);
+    const res = await fetch("/api/meetings/youtube", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ url: ytUrl, title: ytTitle || undefined }),
+    });
+    const data = await res.json();
+    setMeetings((prev) => [
+      { id: data.meetingId, title: ytTitle || ytUrl, status: "processing", createdAt: new Date().toISOString() },
+      ...prev,
+    ]);
+    setYtUrl("");
+    setYtTitle("");
+    setUploading(false);
+  }
+
   if (isPending || !session) return null;
 
   return (
@@ -71,41 +93,68 @@ export default function MeetingsPage() {
 
       <main className="max-w-3xl mx-auto px-4 py-10 space-y-10">
         {/* Upload */}
-        <section className="bg-zinc-900 border border-zinc-800 rounded-2xl p-6">
-          <h2 className="font-semibold text-lg mb-4">Upload Meeting Recording</h2>
-          <form onSubmit={handleUpload} className="space-y-4">
-            <input
-              type="text"
-              placeholder="Meeting title (optional)"
-              value={title}
-              onChange={(e) => setTitle(e.target.value)}
-              className="w-full px-3 py-2 rounded-lg bg-zinc-800 border border-zinc-700 text-white placeholder-zinc-500 focus:outline-none focus:border-indigo-500 transition"
-            />
-            <div
-              className="border-2 border-dashed border-zinc-700 rounded-xl p-8 text-center cursor-pointer hover:border-indigo-500 transition"
-              onClick={() => document.getElementById("file-input")?.click()}
-            >
-              {file ? (
-                <p className="text-indigo-400">{file.name}</p>
-              ) : (
-                <p className="text-zinc-500">Click to select audio/video file<br /><span className="text-xs">mp3, mp4, wav, m4a, webm</span></p>
-              )}
-              <input
-                id="file-input"
-                type="file"
-                accept="audio/*,video/*"
-                className="hidden"
-                onChange={(e) => setFile(e.target.files?.[0] ?? null)}
-              />
-            </div>
-            <button
-              type="submit"
-              disabled={!file || uploading}
-              className="w-full py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 font-medium transition"
-            >
-              {uploading ? "Uploading…" : "Upload & Transcribe"}
-            </button>
-          </form>
+        <section className="bg-zinc-900 border border-zinc-800 rounded-2xl overflow-hidden">
+          {/* Tabs */}
+          <div className="flex border-b border-zinc-800">
+            {(["file", "youtube"] as const).map((t) => (
+              <button
+                key={t}
+                onClick={() => setTab(t)}
+                className={`px-6 py-3 text-sm font-medium transition ${tab === t ? "text-white border-b-2 border-indigo-500" : "text-zinc-500 hover:text-white"}`}
+              >
+                {t === "file" ? "📁 Upload File" : "▶️ YouTube URL"}
+              </button>
+            ))}
+          </div>
+
+          <div className="p-6">
+            {tab === "file" ? (
+              <form onSubmit={handleUpload} className="space-y-4">
+                <input
+                  type="text"
+                  placeholder="Meeting title (optional)"
+                  value={title}
+                  onChange={(e) => setTitle(e.target.value)}
+                  className="w-full px-3 py-2 rounded-lg bg-zinc-800 border border-zinc-700 text-white placeholder-zinc-500 focus:outline-none focus:border-indigo-500 transition"
+                />
+                <div
+                  className="border-2 border-dashed border-zinc-700 rounded-xl p-8 text-center cursor-pointer hover:border-indigo-500 transition"
+                  onClick={() => document.getElementById("file-input")?.click()}
+                >
+                  {file ? (
+                    <p className="text-indigo-400">{file.name}</p>
+                  ) : (
+                    <p className="text-zinc-500">Click to select audio/video file<br /><span className="text-xs">mp3, mp4, wav, m4a, webm</span></p>
+                  )}
+                  <input id="file-input" type="file" accept="audio/*,video/*" className="hidden" onChange={(e) => setFile(e.target.files?.[0] ?? null)} />
+                </div>
+                <button type="submit" disabled={!file || uploading} className="w-full py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 font-medium transition">
+                  {uploading ? "Uploading…" : "Upload & Transcribe"}
+                </button>
+              </form>
+            ) : (
+              <form onSubmit={handleYouTube} className="space-y-4">
+                <input
+                  type="text"
+                  placeholder="Meeting title (optional — auto-fetched from YouTube)"
+                  value={ytTitle}
+                  onChange={(e) => setYtTitle(e.target.value)}
+                  className="w-full px-3 py-2 rounded-lg bg-zinc-800 border border-zinc-700 text-white placeholder-zinc-500 focus:outline-none focus:border-indigo-500 transition"
+                />
+                <input
+                  type="url"
+                  required
+                  placeholder="https://youtube.com/watch?v=..."
+                  value={ytUrl}
+                  onChange={(e) => setYtUrl(e.target.value)}
+                  className="w-full px-3 py-2 rounded-lg bg-zinc-800 border border-zinc-700 text-white placeholder-zinc-500 focus:outline-none focus:border-indigo-500 transition"
+                />
+                <button type="submit" disabled={!ytUrl.trim() || uploading} className="w-full py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 font-medium transition">
+                  {uploading ? "Processing…" : "Extract & Transcribe"}
+                </button>
+              </form>
+            )}
+          </div>
         </section>
 
         {/* Meetings list */}
