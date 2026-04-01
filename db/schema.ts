@@ -8,6 +8,8 @@ export const user = pgTable("user", {
   image: text("image"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  stripeCustomerId: text("stripe_customer_id"),
+  stripePlan: text("stripe_plan", { enum: ["free", "pro"] }).notNull().default("free"),
 });
 
 export const session = pgTable("session", {
@@ -48,6 +50,33 @@ export const verification = pgTable("verification", {
   expiresAt: timestamp("expires_at").notNull(),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const meeting = pgTable("meeting", {
+  id: text("id").primaryKey(),
+  userId: text("user_id")
+    .notNull()
+    .references(() => user.id, { onDelete: "cascade" }),
+  title: text("title").notNull(),
+  audioUrl: text("audio_url"),
+  transcript: text("transcript"),
+  summary: text("summary"),
+  status: text("status", { enum: ["pending", "processing", "done", "error"] })
+    .notNull()
+    .default("pending"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+export const actionItem = pgTable("action_item", {
+  id: text("id").primaryKey(),
+  meetingId: text("meeting_id")
+    .notNull()
+    .references(() => meeting.id, { onDelete: "cascade" }),
+  task: text("task").notNull(),
+  assignee: text("assignee"),
+  dueDate: text("due_date"),
+  done: boolean("done").notNull().default(false),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
 export const chatMessage = pgTable("chat_message", {
