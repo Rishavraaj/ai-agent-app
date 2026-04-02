@@ -31,15 +31,20 @@ async function joinMeeting(page: Page, url: string, platform: string) {
   await page.goto(url, { waitUntil: "domcontentloaded", timeout: 30000 });
 
   if (platform === "meet") {
-    // Dismiss mic/camera prompts, click Join
     await page.waitForTimeout(3000);
-    // Turn off mic and camera
-    const micBtn = page.locator('[data-is-muted="false"][aria-label*="microphone" i]').first();
-    if (await micBtn.isVisible({ timeout: 3000 }).catch(() => false)) await micBtn.click();
-    const camBtn = page.locator('[aria-label*="camera" i][data-is-muted="false"]').first();
-    if (await camBtn.isVisible({ timeout: 3000 }).catch(() => false)) await camBtn.click();
-    // Click "Join now" or "Ask to join"
-    const joinBtn = page.locator('button:has-text("Join now"), button:has-text("Ask to join"), button:has-text("Join")').first();
+
+    // Dismiss "Sign in with your Google account" tooltip if present
+    const gotItBtn = page.locator('button:has-text("Got it")').first();
+    if (await gotItBtn.isVisible({ timeout: 3000 }).catch(() => false)) await gotItBtn.click();
+
+    // Fill in guest name if the field is present
+    const nameInput = page.locator('input[placeholder*="name" i], input[aria-label*="name" i]').first();
+    if (await nameInput.isVisible({ timeout: 3000 }).catch(() => false)) {
+      await nameInput.fill("MOM Bot");
+    }
+
+    // Click "Ask to join" or "Join now"
+    const joinBtn = page.locator('button:has-text("Ask to join"), button:has-text("Join now"), button:has-text("Join")').first();
     await joinBtn.waitFor({ timeout: 15000 });
     await joinBtn.click();
   }
