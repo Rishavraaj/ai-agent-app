@@ -1,5 +1,4 @@
 import { chromium } from "playwright-extra";
-import StealthPlugin from "puppeteer-extra-plugin-stealth";
 import type { Browser, Page } from "playwright";
 import { mkdtemp, readdir, unlink } from "fs/promises";
 import { tmpdir } from "os";
@@ -12,8 +11,9 @@ import { setProgress } from "@/lib/progress";
 import { extractMeetingInsights } from "@/lib/meeting-agent";
 import { sendMeetingSummaryEmail } from "@/lib/email";
 
-// Apply stealth plugin — prevents Google Meet from detecting automation
-const stealthPlugin = StealthPlugin();
+// Apply stealth plugin — use require to avoid ESM/CJS interop issues with Next.js
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const stealthPlugin = require("puppeteer-extra-plugin-stealth")();
 stealthPlugin.enabledEvasions.delete("iframe.contentWindow");
 stealthPlugin.enabledEvasions.delete("media.codecs");
 chromium.use(stealthPlugin);
