@@ -61,7 +61,7 @@ export const meeting = pgTable("meeting", {
   audioUrl: text("audio_url"),
   transcript: text("transcript"),
   summary: text("summary"),
-  status: text("status", { enum: ["pending", "processing", "done", "error"] })
+  status: text("status", { enum: ["pending", "waiting", "processing", "done", "error", "rejected"] })
     .notNull()
     .default("pending"),
   progress: text("progress").notNull().default("0"),
