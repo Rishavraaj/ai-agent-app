@@ -171,6 +171,15 @@ export async function runMomBot({
     });
 
     // Exact MutationObserver logic from meetingbot/meetingbot (including mergedAudio handling)
+    // DEBUG: dump full panel HTML and take screenshot
+    await page.screenshot({ path: "/tmp/mombot-debug.png" });
+    const debugHtml = await page.evaluate(() => {
+      const panel = document.querySelector('[aria-label="Participants"]');
+      if (!panel) return `PANEL NOT FOUND. Body snippet: ${document.body.innerHTML.substring(0, 2000)}`;
+      return `PANEL FOUND. innerHTML: ${panel.innerHTML.substring(0, 5000)}`;
+    });
+    console.log("=== DOM DEBUG ===\n", debugHtml, "\n=================");
+
     await page.evaluate(() => {      const peopleList = document.querySelector('[aria-label="Participants"]');
       if (!peopleList) { console.error("Could not find participants list element"); return; }
 
