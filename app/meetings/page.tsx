@@ -271,6 +271,7 @@ export default function MeetingsPage() {
                           <button
                             onClick={async (e) => {
                               e.preventDefault();
+                              e.stopPropagation();
                               await fetch("/api/bot/stop", {
                                 method: "POST",
                                 headers: { "Content-Type": "application/json" },
