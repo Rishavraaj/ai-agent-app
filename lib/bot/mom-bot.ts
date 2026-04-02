@@ -145,8 +145,9 @@ export async function runMomBot({
     await db.update(meeting).set({ status: "processing" }).where(eq(meeting.id, meetingId));
 
     // ── Participant monitoring (mirrors meetingbot/meetingbot) ──────────────
-    let participantCount = 0;
-    let timeAloneStarted = Infinity;
+    // participants array includes the bot itself, so length=1 means alone
+    const participants: string[] = ["bot-self"];
+    let timeAloneStarted: number = Infinity;
 
     // Open people panel so the participants list DOM is available
     try {
@@ -159,33 +160,34 @@ export async function runMomBot({
       await page.waitForSelector('[aria-label="Participants"]', { state: "visible", timeout: 5000 });
     } catch { /* panel may not open — continue anyway */ }
 
-    // Expose callbacks so the in-page MutationObserver can update our counter
-    await page.exposeFunction("onParticipantJoin", () => {
-      participantCount++;
-      timeAloneStarted = Infinity;
+    // Expose callbacks — mirrors meetingbot/meetingbot exactly
+    await page.exposeFunction("onParticipantJoin", (id: string) => {
+      if (!participants.includes(id)) {
+        participants.push(id);
+        timeAloneStarted = Infinity; // reset alone timer
+      }
     });
-    await page.exposeFunction("onParticipantLeave", () => {
-      participantCount = Math.max(0, participantCount - 1);
-      if (participantCount <= 1) timeAloneStarted = Date.now();
+    await page.exposeFunction("onParticipantLeave", (id: string) => {
+      const idx = participants.indexOf(id);
+      if (idx !== -1) participants.splice(idx, 1);
+      // length=1 means only bot-self remains
+      if (participants.length === 1) timeAloneStarted = Date.now();
     });
 
-    // Set up MutationObserver on the participants list (mirrors meetingbot/meetingbot)
+    // MutationObserver on participants list — mirrors meetingbot/meetingbot
     await page.evaluate(() => {
       const peopleList = document.querySelector('[aria-label="Participants"]');
-      if (!peopleList) return;
-
-      const seen = new Set<string>();
+      if (!peopleList) { console.warn("Participants panel not found"); return; }
 
       const processNode = (node: any, added: boolean) => {
         const id = node?.getAttribute?.("data-participant-id");
         if (!id) return;
-        if (added && !seen.has(id)) { seen.add(id); (window as any).onParticipantJoin(); }
-        if (!added && seen.has(id)) { seen.delete(id); (window as any).onParticipantLeave(); }
+        if (added) (window as any).onParticipantJoin(id);
+        else       (window as any).onParticipantLeave(id);
       };
 
-      // Seed initial participants
+      // Seed existing participants
       Array.from(peopleList.childNodes).forEach((n: any) => processNode(n, true));
-      participantCount = seen.size; // local var unused but observer fires correctly
 
       new MutationObserver(mutations => {
         mutations.forEach(m => {
@@ -194,6 +196,9 @@ export async function runMomBot({
         });
       }).observe(peopleList, { childList: true, subtree: true });
     });
+
+    // If no one else is in the meeting right after joining, start alone timer
+    if (participants.length === 1) timeAloneStarted = Date.now();
 
     // ── Audio capture ───────────────────────────────────────────────────────
     await page.evaluate(() => {
@@ -235,22 +240,33 @@ export async function runMomBot({
       } catch { /* ignore — page may have navigated */ }
     }, 30000);
 
-    // ── Main loop — mirrors meetingbot/meetingbot ───────────────────────────
+    // ── Main loop — mirrors meetingbot/meetingbot exactly ──────────────────
     const deadline = Date.now() + durationMs;
-    while (Date.now() < deadline) {
-      // Kicked check: leave button gone
-      const leaveVisible = await page.isVisible(LEAVE_BTN).catch(() => false);
-      if (!leaveVisible) { console.log("Kicked from meeting."); break; }
-
-      // Alone timeout
-      if (participantCount <= 1 && Date.now() - timeAloneStarted > ALONE_LEAVE_MS) {
-        console.log("Everyone left — leaving after grace period.");
-        break;
+    while (true) {
+      // Only bot left — start/check alone timer (length=1 means just bot-self)
+      if (participants.length === 1) {
+        const msDiff = Date.now() - timeAloneStarted;
+        console.log(`Only bot left. ${Math.round(msDiff / 1000)}s / ${ALONE_LEAVE_MS / 1000}s`);
+        if (msDiff > ALONE_LEAVE_MS) {
+          console.log("Everyone left — leaving after grace period.");
+          break;
+        }
       }
 
-      // Dismiss any info popups
+      // Kicked: "Return to home screen" button, hidden leave button, or removed text
+      const kicked =
+        (await page.locator('//button[.//span[text()="Return to home screen"]]').count().catch(() => 0)) > 0 ||
+        (await page.locator(LEAVE_BTN).isHidden({ timeout: 500 }).catch(() => true)) ||
+        (await page.locator('text="You\'ve been removed from the meeting"').isVisible({ timeout: 500 }).catch(() => false));
+      if (kicked) { console.log("Kicked from meeting."); break; }
+
+      // Duration exceeded
+      if (Date.now() > deadline) { console.log("Duration limit reached."); break; }
+
+      // Dismiss info popups
       try { await page.click(INFO_POPUP_BTN, { timeout: 500 }); } catch {}
 
+      console.log("Waiting 5 seconds...");
       await new Promise(r => setTimeout(r, 5000));
     }
 
