@@ -37,15 +37,23 @@ async function joinMeeting(page: Page, url: string, platform: string) {
     const gotItBtn = page.locator('button:has-text("Got it")').first();
     if (await gotItBtn.isVisible({ timeout: 3000 }).catch(() => false)) await gotItBtn.click();
 
-    // Fill in guest name if the field is present
-    const nameInput = page.locator('input[placeholder*="name" i], input[aria-label*="name" i]').first();
-    if (await nameInput.isVisible({ timeout: 3000 }).catch(() => false)) {
-      await nameInput.fill("MOM Bot");
-    }
+    // Fill in guest name — required for the join button to become enabled
+    const nameInput = page.locator('input[jsname], input[placeholder]').first();
+    await nameInput.waitFor({ timeout: 10000 });
+    await nameInput.fill("MOM Bot");
 
-    // Click "Ask to join" or "Join now"
+    // Wait for join button to become enabled, then click
     const joinBtn = page.locator('button:has-text("Ask to join"), button:has-text("Join now"), button:has-text("Join")').first();
-    await joinBtn.waitFor({ timeout: 15000 });
+    await joinBtn.waitFor({ state: "visible", timeout: 15000 });
+    await page.waitForFunction(
+      () => {
+        const btn = [...document.querySelectorAll("button")].find(
+          (b) => b.textContent?.match(/Ask to join|Join now|Join/)
+        );
+        return btn && !btn.disabled;
+      },
+      { timeout: 15000 }
+    );
     await joinBtn.click();
   }
 
