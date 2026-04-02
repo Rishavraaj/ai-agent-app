@@ -204,11 +204,37 @@ export async function runMomBot({
       } catch { /* page may have navigated */ }
     }, 30000);
 
-    // Wait for meeting to end — leave button disappears when call ends, or hit duration timeout
-    await Promise.race([
-      page.waitForSelector('//button[@aria-label="Leave call"]', { state: "detached", timeout: durationMs }),
-      new Promise((r) => setTimeout(r, durationMs)),
-    ]);
+    // Poll every 5s: leave if alone for 30s, kicked, or duration exceeded
+    const ALONE_TIMEOUT_MS = 30_000;
+    let alonesince: number | null = null;
+    const deadline = Date.now() + durationMs;
+
+    while (Date.now() < deadline) {
+      // Check if kicked (leave button gone)
+      const leaveVisible = await page.isVisible('//button[@aria-label="Leave call"]').catch(() => false);
+      if (!leaveVisible) break;
+
+      // Count participants (Google Meet shows each person as a video tile)
+      const participantCount = await page.evaluate(() =>
+        document.querySelectorAll('[data-participant-id]').length
+      ).catch(() => 1);
+
+      if (participantCount <= 1) {
+        // Only the bot is left
+        if (!alonesince) alonesince = Date.now();
+        if (Date.now() - alonesince >= ALONE_TIMEOUT_MS) {
+          console.log("Everyone left, bot leaving after grace period.");
+          break;
+        }
+      } else {
+        aloneince = null; // reset if others rejoin
+      }
+
+      await new Promise((r) => setTimeout(r, 5000));
+    }
+
+    // Click leave button to exit gracefully
+    await page.click('//button[@aria-label="Leave call"]').catch(() => {});
 
     clearInterval(chunkInterval);
 
