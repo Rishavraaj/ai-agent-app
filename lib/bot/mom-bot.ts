@@ -113,8 +113,7 @@ export async function runMomBot({
         "--disable-features=IsolateOrigins,site-per-process",
         "--disable-infobars",
         "--use-fake-ui-for-media-stream",
-        "--use-file-for-fake-video-capture=/dev/null",
-        "--use-file-for-fake-audio-capture=/dev/null",
+        "--use-fake-device-for-media-stream",
         "--autoplay-policy=no-user-gesture-required",
       ],
     });
@@ -157,8 +156,8 @@ export async function runMomBot({
         return false;
       });
       if (!hasPeopleIcon) await page.click(PEOPLE_BTN).catch(() => {});
-      await page.waitForSelector('[aria-label="Participants"]', { state: "visible", timeout: 5000 });
-    } catch { /* panel may not open — continue anyway */ }
+      await page.waitForSelector('[aria-label="Participants"]', { state: "visible", timeout: 8000 });
+    } catch { console.warn("Participants panel not found — using fallback alone detection"); }
 
     // Expose callbacks — mirrors meetingbot/meetingbot exactly
     await page.exposeFunction("onParticipantJoin", (id: string) => {
@@ -174,10 +173,13 @@ export async function runMomBot({
       if (participants.length === 1) timeAloneStarted = Date.now();
     });
 
+    // Wait for participants to render in the panel before seeding
+    await page.waitForTimeout(3000);
+
     // MutationObserver on participants list — mirrors meetingbot/meetingbot
-    await page.evaluate(() => {
+    const panelFound = await page.evaluate(() => {
       const peopleList = document.querySelector('[aria-label="Participants"]');
-      if (!peopleList) { console.warn("Participants panel not found"); return; }
+      if (!peopleList) return false;
 
       const processNode = (node: any, added: boolean) => {
         const id = node?.getAttribute?.("data-participant-id");
@@ -195,10 +197,13 @@ export async function runMomBot({
           m.removedNodes.forEach((n: any) => processNode(n, false));
         });
       }).observe(peopleList, { childList: true, subtree: true });
+      return true;
     });
 
-    // If no one else is in the meeting right after joining, start alone timer
-    if (participants.length === 1) timeAloneStarted = Date.now();
+    // If panel didn't load or no one else detected, start alone timer now
+    if (!panelFound || participants.length === 1) timeAloneStarted = Date.now();
+    // If others were found in the panel, reset alone timer
+    else timeAloneStarted = Infinity;
 
     // ── Audio capture ───────────────────────────────────────────────────────
     await page.evaluate(() => {
