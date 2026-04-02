@@ -148,7 +148,7 @@ export async function runMomBot({
     const participants: Participant[] = [];
     let timeAloneStarted: number = Infinity;
 
-    // Open people panel
+    // Open people panel — try icon click first, then aria-label button
     try {
       const hasPeopleIcon = await page.evaluate(() => {
         const icon = Array.from(document.querySelectorAll("i")).find(el => el.textContent?.trim() === "people");
@@ -158,6 +158,9 @@ export async function runMomBot({
       if (!hasPeopleIcon) await page.click(PEOPLE_BTN).catch(() => {});
       await page.waitForSelector('[aria-label="Participants"]', { state: "visible", timeout: 8000 });
     } catch { console.warn("Participants panel not found"); }
+
+    // Wait for panel DOM to settle
+    await page.waitForTimeout(2000);
 
     // Expose callbacks — exact signature from meetingbot/meetingbot
     await page.exposeFunction("onParticipantJoin", (participant: Participant) => {
@@ -170,13 +173,28 @@ export async function runMomBot({
       timeAloneStarted = participants.length === 1 ? Date.now() : Infinity;
     });
 
-    // Exact MutationObserver logic from meetingbot/meetingbot (including mergedAudio handling)
-    // DEBUG: dump full panel HTML and take screenshot
+    // DEBUG: screenshot + search for any participant-related elements
     await page.screenshot({ path: "/tmp/mombot-debug.png" });
     const debugHtml = await page.evaluate(() => {
-      const panel = document.querySelector('[aria-label="Participants"]');
-      if (!panel) return `PANEL NOT FOUND. Body snippet: ${document.body.innerHTML.substring(0, 2000)}`;
-      return `PANEL FOUND. innerHTML: ${panel.innerHTML.substring(0, 5000)}`;
+      // Try multiple possible panel selectors
+      const selectors = [
+        '[aria-label="Participants"]',
+        '[aria-label="People"]',
+        '[data-participant-id]',
+        '[jsname="ME3Aqe"]',
+        '[jsname="jV3D1"]',
+      ];
+      const results: string[] = [];
+      for (const sel of selectors) {
+        const els = document.querySelectorAll(sel);
+        if (els.length) results.push(`${sel}: ${els.length} found, first outerHTML: ${els[0].outerHTML.substring(0, 300)}`);
+        else results.push(`${sel}: NOT FOUND`);
+      }
+      // Also find all elements with data-participant-id anywhere
+      const withParticipantId = document.querySelectorAll("[data-participant-id]");
+      results.push(`[data-participant-id] anywhere: ${withParticipantId.length}`);
+      if (withParticipantId.length) results.push(`first: ${withParticipantId[0].outerHTML.substring(0, 300)}`);
+      return results.join("\n");
     });
     console.log("=== DOM DEBUG ===\n", debugHtml, "\n=================");
 
