@@ -28,33 +28,29 @@ function detectPlatform(url: string): "meet" | "zoom" | "teams" | "unknown" {
 
 // Platform-specific join logic
 async function joinMeeting(page: Page, url: string, platform: string) {
-  await page.goto(url, { waitUntil: "domcontentloaded", timeout: 30000 });
+  await page.goto(url, { waitUntil: "networkidle", timeout: 30000 });
 
   if (platform === "meet") {
-    await page.waitForTimeout(3000);
+    // Wait for and fill the name field (exact selector from meetingbot reference)
+    await page.waitForSelector('input[type="text"][aria-label="Your name"]', { timeout: 15000 });
+    await page.waitForTimeout(500);
+    await page.fill('input[type="text"][aria-label="Your name"]', "MOM Bot");
 
-    // Dismiss "Sign in with your Google account" tooltip if present
-    const gotItBtn = page.locator('button:has-text("Got it")').first();
-    if (await gotItBtn.isVisible({ timeout: 3000 }).catch(() => false)) await gotItBtn.click();
+    // Turn off mic/camera if still on
+    try { await page.click('[aria-label*="Turn off microphone"]', { timeout: 500 }); } catch {}
+    try { await page.click('[aria-label*="Turn off camera"]', { timeout: 500 }); } catch {}
 
-    // Fill in guest name — required for the join button to become enabled
-    const nameInput = page.locator('input[jsname], input[placeholder]').first();
-    await nameInput.waitFor({ timeout: 10000 });
-    await nameInput.fill("MOM Bot");
+    // Wait for either join button (XPath from meetingbot reference)
+    const askToJoin = '//button[.//span[text()="Ask to join"]]';
+    const joinNow   = '//button[.//span[text()="Join now"]]';
+    const entryBtn = await Promise.race([
+      page.waitForSelector(joinNow,   { timeout: 60000 }).then(() => joinNow),
+      page.waitForSelector(askToJoin, { timeout: 60000 }).then(() => askToJoin),
+    ]);
+    await page.click(entryBtn);
 
-    // Wait for join button to become enabled, then click
-    const joinBtn = page.locator('button:has-text("Ask to join"), button:has-text("Join now"), button:has-text("Join")').first();
-    await joinBtn.waitFor({ state: "visible", timeout: 15000 });
-    await page.waitForFunction(
-      () => {
-        const btn = [...document.querySelectorAll("button")].find(
-          (b) => b.textContent?.match(/Ask to join|Join now|Join/)
-        );
-        return btn && !btn.disabled;
-      },
-      { timeout: 15000 }
-    );
-    await joinBtn.click();
+    // Wait until we're actually in the call
+    await page.waitForSelector('//button[@aria-label="Leave call"]', { timeout: 60000 });
   }
 
   if (platform === "zoom") {
