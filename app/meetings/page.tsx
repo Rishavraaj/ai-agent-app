@@ -7,16 +7,27 @@ import Link from "next/link";
 type Meeting = {
   id: string;
   title: string;
-  status: "pending" | "processing" | "done" | "error";
+  status: "pending" | "waiting" | "processing" | "done" | "error" | "rejected";
   progress: number;
   createdAt: string;
 };
 
 const STATUS_COLORS = {
-  pending: "text-zinc-400",
+  pending:    "text-zinc-400",
+  waiting:    "text-blue-400 animate-pulse",
   processing: "text-yellow-400 animate-pulse",
-  done: "text-green-400",
-  error: "text-red-400",
+  done:       "text-green-400",
+  error:      "text-red-400",
+  rejected:   "text-orange-400",
+};
+
+const STATUS_LABELS = {
+  pending:    "pending",
+  waiting:    "⏳ waiting room",
+  processing: "recording",
+  done:       "done",
+  error:      "error",
+  rejected:   "rejected",
 };
 
 export default function MeetingsPage() {
@@ -42,19 +53,19 @@ export default function MeetingsPage() {
     fetch("/api/meetings").then((r) => r.json()).then(setMeetings);
   }, [session]);
 
-  // Poll progress for processing meetings every 3s
+  // Poll progress for active meetings every 3s
   useEffect(() => {
-    const processing = meetings.filter((m) => m.status === "processing");
-    if (!processing.length) return;
+    const active = meetings.filter((m) => m.status === "processing" || m.status === "waiting" || m.status === "pending");
+    if (!active.length) return;
     const interval = setInterval(async () => {
       const updates = await Promise.all(
-        processing.map((m) =>
+        active.map((m) =>
           fetch(`/api/meetings/progress?id=${m.id}`).then((r) => r.json())
         )
       );
       setMeetings((prev) =>
         prev.map((m) => {
-          const idx = processing.findIndex((p) => p.id === m.id);
+          const idx = active.findIndex((p) => p.id === m.id);
           if (idx === -1) return m;
           return { ...m, ...updates[idx] };
         })
@@ -92,7 +103,7 @@ export default function MeetingsPage() {
     });
     const data = await res.json();
     setMeetings((prev) => [
-      { id: data.meetingId, title: botTitle || botUrl, status: "processing", progress: 0, createdAt: new Date().toISOString() },
+      { id: data.meetingId, title: botTitle || botUrl, status: "pending", progress: 0, createdAt: new Date().toISOString() },
       ...prev,
     ]);
     setBotUrl("");
@@ -253,7 +264,7 @@ export default function MeetingsPage() {
                     <div className="flex items-center justify-between mb-1">
                       <p className="font-medium">{m.title}</p>
                       <span className={`text-sm font-medium capitalize ${STATUS_COLORS[m.status]}`}>
-                        {m.status === "processing" ? `${m.progress ?? 0}%` : m.status}
+                        {m.status === "processing" ? `${m.progress ?? 0}%` : STATUS_LABELS[m.status]}
                       </span>
                     </div>
                     {m.status === "processing" && (
