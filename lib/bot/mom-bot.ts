@@ -9,6 +9,7 @@ import { eq } from "drizzle-orm";
 import { setProgress } from "@/lib/progress";
 import { extractMeetingInsights } from "@/lib/meeting-agent";
 import { sendMeetingSummaryEmail } from "@/lib/email";
+import { shouldStop, clearStop } from "@/lib/bot/stop-signal";
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
@@ -262,6 +263,9 @@ export async function runMomBot({
     const deadline = Date.now() + durationMs;
     while (true) {
       // participants.length === 1 in meetingbot means only the bot itself remains
+      // Manual stop requested from UI
+      if (shouldStop(meetingId)) { console.log("Stop requested — leaving."); clearStop(meetingId); break; }
+
       console.log(`Loop tick — participants: ${participants.length}`, participants.map(p => p.name));
       // our participants array only has real people, so length === 0 means alone
       if (participants.length === 0) {

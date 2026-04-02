@@ -263,9 +263,26 @@ export default function MeetingsPage() {
                   >
                     <div className="flex items-center justify-between mb-1">
                       <p className="font-medium">{m.title}</p>
-                      <span className={`text-sm font-medium capitalize ${STATUS_COLORS[m.status]}`}>
-                        {m.status === "processing" ? `${m.progress ?? 0}%` : STATUS_LABELS[m.status]}
-                      </span>
+                      <div className="flex items-center gap-2">
+                        <span className={`text-sm font-medium capitalize ${STATUS_COLORS[m.status]}`}>
+                          {m.status === "processing" ? `${m.progress ?? 0}%` : STATUS_LABELS[m.status]}
+                        </span>
+                        {(m.status === "processing" || m.status === "waiting") && (
+                          <button
+                            onClick={async (e) => {
+                              e.preventDefault();
+                              await fetch("/api/bot/stop", {
+                                method: "POST",
+                                headers: { "Content-Type": "application/json" },
+                                body: JSON.stringify({ meetingId: m.id }),
+                              });
+                            }}
+                            className="text-xs px-2 py-0.5 rounded bg-red-900 hover:bg-red-700 text-red-300 transition"
+                          >
+                            Stop bot
+                          </button>
+                        )}
+                      </div>
                     </div>
                     {m.status === "processing" && (
                       <div className="w-full h-1.5 bg-zinc-700 rounded-full overflow-hidden mt-2">
