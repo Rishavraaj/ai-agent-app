@@ -262,6 +262,7 @@ export async function runMomBot({
     const deadline = Date.now() + durationMs;
     while (true) {
       // participants.length === 1 in meetingbot means only the bot itself remains
+      console.log(`Loop tick — participants: ${participants.length}`, participants.map(p => p.name));
       // our participants array only has real people, so length === 0 means alone
       if (participants.length === 0) {
         if (!isFinite(timeAloneStarted)) timeAloneStarted = Date.now(); // safety fallback
