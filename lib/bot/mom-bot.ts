@@ -143,12 +143,12 @@ export async function runMomBot({
     await setProgress(meetingId, 20);
     await db.update(meeting).set({ status: "processing" }).where(eq(meeting.id, meetingId));
 
-    // ── Participant monitoring (mirrors meetingbot/meetingbot) ──────────────
-    // participants array includes the bot itself, so length=1 means alone
-    const participants: string[] = ["bot-self"];
+    // ── Participant monitoring — exact port of meetingbot/meetingbot ───────
+    type Participant = { id: string; name: string };
+    const participants: Participant[] = [];
     let timeAloneStarted: number = Infinity;
 
-    // Open people panel so the participants list DOM is available
+    // Open people panel
     try {
       const hasPeopleIcon = await page.evaluate(() => {
         const icon = Array.from(document.querySelectorAll("i")).find(el => el.textContent?.trim() === "people");
@@ -157,61 +157,94 @@ export async function runMomBot({
       });
       if (!hasPeopleIcon) await page.click(PEOPLE_BTN).catch(() => {});
       await page.waitForSelector('[aria-label="Participants"]', { state: "visible", timeout: 8000 });
-    } catch { console.warn("Participants panel not found — using fallback alone detection"); }
+    } catch { console.warn("Participants panel not found"); }
 
-    // Expose callbacks — mirrors meetingbot/meetingbot exactly
-    await page.exposeFunction("onParticipantJoin", (id: string) => {
-      if (!participants.includes(id)) {
-        participants.push(id);
-        timeAloneStarted = Infinity; // reset alone timer
-      }
+    // Expose callbacks — exact signature from meetingbot/meetingbot
+    await page.exposeFunction("onParticipantJoin", (participant: Participant) => {
+      participants.push(participant);
+      timeAloneStarted = Infinity;
     });
-    await page.exposeFunction("onParticipantLeave", (id: string) => {
-      const idx = participants.indexOf(id);
+    await page.exposeFunction("onParticipantLeave", (participant: Participant) => {
+      const idx = participants.findIndex(p => p.id === participant.id);
       if (idx !== -1) participants.splice(idx, 1);
-      // length=1 means only bot-self remains
-      if (participants.length === 1) timeAloneStarted = Date.now();
+      timeAloneStarted = participants.length === 1 ? Date.now() : Infinity;
     });
 
-    // Wait for participants to render in the panel before seeding
-    await page.waitForTimeout(3000);
+    // Exact MutationObserver logic from meetingbot/meetingbot (including mergedAudio handling)
+    await page.evaluate(() => {      const peopleList = document.querySelector('[aria-label="Participants"]');
+      if (!peopleList) { console.error("Could not find participants list element"); return; }
 
-    // DEBUG: dump participants panel HTML to understand DOM structure
-    const panelDebug = await page.evaluate(() => {
-      const panel = document.querySelector('[aria-label="Participants"]');
-      if (!panel) return "PANEL NOT FOUND";
-      return panel.innerHTML.substring(0, 3000);
-    });
-    console.log("=== PARTICIPANTS PANEL HTML ===\n", panelDebug, "\n==============================");
+      const initialParticipants = Array.from(peopleList.childNodes).filter(n => n.nodeType === Node.ELEMENT_NODE);
+      (window as any).participantArray = [];
+      (window as any).mergedAudioParticipantArray = [];
 
-    // MutationObserver on participants list — mirrors meetingbot/meetingbot
-    const panelFound = await page.evaluate(() => {
-      const peopleList = document.querySelector('[aria-label="Participants"]');
-      if (!peopleList) return false;
+      (window as any).handleMergedAudio = () => {
+        const mergedAudioNode = document.querySelector('[aria-label="Merged audio"]');
+        if (!mergedAudioNode) return;
+        const detectedParticipants: any[] = [];
+        mergedAudioNode.parentNode!.childNodes.forEach((childNode: any) => {
+          const participantId = childNode.getAttribute?.("data-participant-id");
+          if (!participantId) return;
+          detectedParticipants.push({ id: participantId, name: childNode.getAttribute("aria-label") });
+        });
 
-      const processNode = (node: any, added: boolean) => {
-        const id = node?.getAttribute?.("data-participant-id");
-        if (!id) return;
-        if (added) (window as any).onParticipantJoin(id);
-        else       (window as any).onParticipantLeave(id);
+        if (detectedParticipants.length > (window as any).mergedAudioParticipantArray.length) {
+          detectedParticipants
+            .filter((p: any) => !(window as any).mergedAudioParticipantArray.find((x: any) => x.id === p.id))
+            .forEach((p: any) => {
+              (window as any).mergedAudioParticipantArray.push(p);
+              (window as any).onParticipantJoin(p);
+              (window as any).participantArray.push(p);
+            });
+        } else if (detectedParticipants.length < (window as any).mergedAudioParticipantArray.length) {
+          (window as any).mergedAudioParticipantArray
+            .filter((p: any) => !detectedParticipants.find((x: any) => x.id === p.id))
+            .forEach((p: any) => {
+              if (!document.querySelector(`[data-requested-participant-id="${p.id}"]`)) {
+                (window as any).onParticipantLeave(p);
+                (window as any).participantArray = (window as any).participantArray.filter((x: any) => x.id !== p.id);
+              }
+              (window as any).mergedAudioParticipantArray = (window as any).mergedAudioParticipantArray.filter((x: any) => x.id !== p.id);
+            });
+        }
       };
 
-      // Seed existing participants
-      Array.from(peopleList.childNodes).forEach((n: any) => processNode(n, true));
+      // Seed initial participants
+      initialParticipants.forEach((node: any) => {
+        const participant = { id: node.getAttribute("data-participant-id"), name: node.getAttribute("aria-label") };
+        if (!participant.id) { (window as any).handleMergedAudio(); return; }
+        (window as any).onParticipantJoin(participant);
+        (window as any).participantArray.push(participant);
+      });
 
+      // Watch for changes
       new MutationObserver(mutations => {
-        mutations.forEach(m => {
-          m.addedNodes.forEach((n: any)   => processNode(n, true));
-          m.removedNodes.forEach((n: any) => processNode(n, false));
+        mutations.forEach(mutation => {
+          mutation.removedNodes.forEach((node: any) => {
+            const id = node.getAttribute?.("data-participant-id");
+            if (id && (window as any).participantArray.find((p: any) => p.id === id)) {
+              (window as any).onParticipantLeave({ id, name: node.getAttribute("aria-label") });
+              (window as any).participantArray = (window as any).participantArray.filter((p: any) => p.id !== id);
+            } else if (document.querySelector('[aria-label="Merged audio"]')) {
+              (window as any).handleMergedAudio();
+            }
+          });
+          mutation.addedNodes.forEach((node: any) => {
+            const id = node.getAttribute?.("data-participant-id");
+            if (id && !(window as any).participantArray.find((p: any) => p.id === id)) {
+              const participant = { id, name: node.getAttribute("aria-label") };
+              (window as any).onParticipantJoin(participant);
+              (window as any).participantArray.push(participant);
+            } else if (document.querySelector('[aria-label="Merged audio"]')) {
+              (window as any).handleMergedAudio();
+            }
+          });
         });
       }).observe(peopleList, { childList: true, subtree: true });
-      return true;
     });
 
-    // If panel didn't load or no one else detected, start alone timer now
-    if (!panelFound || participants.length === 1) timeAloneStarted = Date.now();
-    // If others were found in the panel, reset alone timer
-    else timeAloneStarted = Infinity;
+    // If no one else found after seeding, start alone timer immediately
+    if (participants.length === 0) timeAloneStarted = Date.now();
 
     // ── Audio capture ───────────────────────────────────────────────────────
     await page.evaluate(() => {
@@ -253,17 +286,15 @@ export async function runMomBot({
       } catch { /* ignore — page may have navigated */ }
     }, 30000);
 
-    // ── Main loop — mirrors meetingbot/meetingbot exactly ──────────────────
+    // ── Main loop — exact port of meetingbot/meetingbot ────────────────────
     const deadline = Date.now() + durationMs;
     while (true) {
-      // Only bot left — start/check alone timer (length=1 means just bot-self)
-      if (participants.length === 1) {
+      // participants.length === 1 in meetingbot means only the bot itself remains
+      // our participants array only has real people, so length === 0 means alone
+      if (participants.length <= 1) {
         const msDiff = Date.now() - timeAloneStarted;
         console.log(`Only bot left. ${Math.round(msDiff / 1000)}s / ${ALONE_LEAVE_MS / 1000}s`);
-        if (msDiff > ALONE_LEAVE_MS) {
-          console.log("Everyone left — leaving after grace period.");
-          break;
-        }
+        if (msDiff > ALONE_LEAVE_MS) { console.log("Everyone left — leaving."); break; }
       }
 
       // Kicked: "Return to home screen" button, hidden leave button, or removed text
