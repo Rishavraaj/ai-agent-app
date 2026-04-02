@@ -1,7 +1,7 @@
-import { chromium, type Browser, type Page } from "playwright";
-import { execFile } from "child_process";
-import { promisify } from "util";
-import { mkdtemp, readdir, unlink, readFile } from "fs/promises";
+import { chromium } from "playwright-extra";
+import StealthPlugin from "puppeteer-extra-plugin-stealth";
+import type { Browser, Page } from "playwright";
+import { mkdtemp, readdir, unlink } from "fs/promises";
 import { tmpdir } from "os";
 import { join } from "path";
 import OpenAI from "openai";
@@ -12,11 +12,26 @@ import { setProgress } from "@/lib/progress";
 import { extractMeetingInsights } from "@/lib/meeting-agent";
 import { sendMeetingSummaryEmail } from "@/lib/email";
 
-const execFileAsync = promisify(execFile);
+// Apply stealth plugin — prevents Google Meet from detecting automation
+const stealthPlugin = StealthPlugin();
+stealthPlugin.enabledEvasions.delete("iframe.contentWindow");
+stealthPlugin.enabledEvasions.delete("media.codecs");
+chromium.use(stealthPlugin);
+
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 const CHROME_PATH =
   "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
+
+const USER_AGENT =
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36";
+
+// Selectors (from meetingbot/meetingbot reference)
+const ENTER_NAME_FIELD  = 'input[type="text"][aria-label="Your name"]';
+const ASK_TO_JOIN_BTN   = '//button[.//span[text()="Ask to join"]]';
+const JOIN_NOW_BTN      = '//button[.//span[text()="Join now"]]';
+const LEAVE_BTN         = '//button[@aria-label="Leave call"]';
+const INFO_POPUP_BTN    = '//button[.//span[text()="Got it"]]';
 
 // Detect meeting platform from URL
 function detectPlatform(url: string): "meet" | "zoom" | "teams" | "unknown" {
@@ -31,26 +46,27 @@ async function joinMeeting(page: Page, url: string, platform: string) {
   await page.goto(url, { waitUntil: "networkidle", timeout: 30000 });
 
   if (platform === "meet") {
-    // Wait for and fill the name field (exact selector from meetingbot reference)
-    await page.waitForSelector('input[type="text"][aria-label="Your name"]', { timeout: 15000 });
+    // Wait for name field and fill it — this enables the join button
+    await page.waitForSelector(ENTER_NAME_FIELD, { timeout: 15000 });
     await page.waitForTimeout(500);
-    await page.fill('input[type="text"][aria-label="Your name"]', "MOM Bot");
+    await page.fill(ENTER_NAME_FIELD, "MOM Bot");
 
     // Turn off mic/camera if still on
     try { await page.click('[aria-label*="Turn off microphone"]', { timeout: 500 }); } catch {}
-    try { await page.click('[aria-label*="Turn off camera"]', { timeout: 500 }); } catch {}
+    try { await page.click('[aria-label*="Turn off camera"]',    { timeout: 500 }); } catch {}
 
-    // Wait for either join button (XPath from meetingbot reference)
-    const askToJoin = '//button[.//span[text()="Ask to join"]]';
-    const joinNow   = '//button[.//span[text()="Join now"]]';
+    // Race between "Join now" (host) and "Ask to join" (guest)
     const entryBtn = await Promise.race([
-      page.waitForSelector(joinNow,   { timeout: 60000 }).then(() => joinNow),
-      page.waitForSelector(askToJoin, { timeout: 60000 }).then(() => askToJoin),
+      page.waitForSelector(JOIN_NOW_BTN,   { timeout: 60000 }).then(() => JOIN_NOW_BTN),
+      page.waitForSelector(ASK_TO_JOIN_BTN, { timeout: 60000 }).then(() => ASK_TO_JOIN_BTN),
     ]);
     await page.click(entryBtn);
 
-    // Wait until we're actually in the call
-    await page.waitForSelector('//button[@aria-label="Leave call"]', { timeout: 60000 });
+    // Confirm we're in the call
+    await page.waitForSelector(LEAVE_BTN, { timeout: 60000 });
+
+    // Dismiss any post-join popups
+    try { await page.click(INFO_POPUP_BTN, { timeout: 5000 }); } catch {}
   }
 
   if (platform === "zoom") {
@@ -97,28 +113,40 @@ export async function runMomBot({
   try {
     await setProgress(meetingId, 5);
 
-    // Launch Chrome with fake audio capture enabled
+    // Launch with stealth-compatible args (mirrors meetingbot/meetingbot)
     browser = await chromium.launch({
       executablePath: CHROME_PATH,
-      headless: false, // needs to be visible to capture audio on most platforms
+      headless: false,
       args: [
-        "--use-fake-ui-for-media-stream",   // auto-allow mic/camera
-        "--use-fake-device-for-media-stream",
-        "--disable-blink-features=AutomationControlled",
+        "--incognito",
         "--no-sandbox",
+        "--disable-setuid-sandbox",
+        "--disable-features=IsolateOrigins,site-per-process",
+        "--disable-infobars",
+        "--use-fake-ui-for-media-stream",
+        "--use-file-for-fake-video-capture=/dev/null",
+        "--use-file-for-fake-audio-capture=/dev/null",
         "--autoplay-policy=no-user-gesture-required",
       ],
     });
 
     const context = await browser.newContext({
       permissions: ["microphone", "camera"],
-      recordVideo: undefined,
+      userAgent: USER_AGENT,
     });
 
-    // Inject a script to capture tab audio via AudioContext → MediaRecorder
+    // Anti-detection init script (mirrors meetingbot/meetingbot)
+    await context.addInitScript(() => {
+      Object.defineProperty(navigator, "webdriver",          { get: () => undefined });
+      Object.defineProperty(navigator, "plugins",            { get: () => [{ name: "Chrome PDF Plugin" }, { name: "Chrome PDF Viewer" }] });
+      Object.defineProperty(navigator, "languages",          { get: () => ["en-US", "en"] });
+      Object.defineProperty(navigator, "hardwareConcurrency",{ get: () => 4 });
+      Object.defineProperty(navigator, "deviceMemory",       { get: () => 8 });
+    });
+
+    // Init audio chunk storage
     await context.addInitScript(() => {
       (window as any).__momBotChunks = [];
-      (window as any).__momBotRecording = false;
     });
 
     const page = await context.newPage();
