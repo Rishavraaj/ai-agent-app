@@ -150,7 +150,15 @@ export async function runMomBot({
     const participants: Participant[] = [];
     let timeAloneStarted: number = Infinity;
 
+    // Capture the bot's own participant ID to exclude it from tracking
+    const botOwnId = await page.evaluate(() => {
+      const tile = document.querySelector("[data-participant-id]");
+      return tile?.getAttribute("data-participant-id") ?? null;
+    });
+    console.log("Bot own participant ID:", botOwnId);
+
     await page.exposeFunction("onParticipantJoin", (participant: Participant) => {
+      if (participant.id === botOwnId) return; // skip self
       if (!participants.find(p => p.id === participant.id)) {
         participants.push(participant);
         console.log(`Participant joined: ${participant.name} (total: ${participants.length})`);
@@ -158,6 +166,7 @@ export async function runMomBot({
       }
     });
     await page.exposeFunction("onParticipantLeave", (participant: Participant) => {
+      if (participant.id === botOwnId) return; // skip self
       const idx = participants.findIndex(p => p.id === participant.id);
       if (idx !== -1) {
         participants.splice(idx, 1);
@@ -166,13 +175,13 @@ export async function runMomBot({
       if (participants.length === 0) timeAloneStarted = Date.now();
     });
 
-    await page.evaluate(() => {
+    await page.evaluate((botId) => {
       const seen = new Map<string, string>();
 
       const processNode = (node: Element, added: boolean) => {
         // Check the node itself
         const id = node.getAttribute?.("data-participant-id");
-        if (id) {
+        if (id && id !== botId) {
           const name = node.getAttribute("aria-label") || id;
           if (added && !seen.has(id)) {
             seen.set(id, name);
@@ -186,6 +195,7 @@ export async function runMomBot({
         if (node.querySelectorAll) {
           node.querySelectorAll("[data-participant-id]").forEach((el: any) => {
             const cid = el.getAttribute("data-participant-id");
+            if (cid === botId) return; // skip self
             const cname = el.getAttribute("aria-label") || cid;
             if (added && !seen.has(cid)) {
               seen.set(cid, cname);
@@ -198,9 +208,10 @@ export async function runMomBot({
         }
       };
 
-      // Seed existing tiles
+      // Seed existing tiles (skip bot's own)
       document.querySelectorAll("[data-participant-id]").forEach((el: any) => {
         const id = el.getAttribute("data-participant-id");
+        if (id === botId) return;
         const name = el.getAttribute("aria-label") || id;
         if (!seen.has(id)) {
           seen.set(id, name);
@@ -215,7 +226,7 @@ export async function runMomBot({
           m.removedNodes.forEach((n: any) => { if (n.nodeType === 1) processNode(n, false); });
         });
       }).observe(document.body, { childList: true, subtree: true });
-    });
+    }, botOwnId);
 
     if (participants.length === 0) timeAloneStarted = Date.now();
 
