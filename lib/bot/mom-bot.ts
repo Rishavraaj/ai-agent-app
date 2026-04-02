@@ -204,12 +204,9 @@ export async function runMomBot({
       } catch { /* page may have navigated */ }
     }, 30000);
 
-    // Wait for meeting to end (detect leave button gone) or timeout
+    // Wait for meeting to end — leave button disappears when call ends, or hit duration timeout
     await Promise.race([
-      page.waitForSelector(
-        'button:has-text("Leave"), button:has-text("End call"), button[aria-label*="leave" i]',
-        { timeout: durationMs }
-      ).then(() => page.waitForTimeout(3000)),
+      page.waitForSelector('//button[@aria-label="Leave call"]', { state: "detached", timeout: durationMs }),
       new Promise((r) => setTimeout(r, durationMs)),
     ]);
 
