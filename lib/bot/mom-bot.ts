@@ -107,11 +107,11 @@ export async function runMomBot({
       executablePath: CHROME_PATH,
       headless: false,
       args: [
-        "--incognito",
         "--no-sandbox",
         "--disable-setuid-sandbox",
         "--disable-features=IsolateOrigins,site-per-process",
         "--disable-infobars",
+        "--disable-blink-features=AutomationControlled",
         "--use-fake-ui-for-media-stream",
         "--use-fake-device-for-media-stream",
         "--autoplay-policy=no-user-gesture-required",
