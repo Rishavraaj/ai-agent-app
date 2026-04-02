@@ -1,4 +1,3 @@
-import { chromium } from "playwright-extra";
 import type { Browser, Page } from "playwright";
 import { mkdtemp, readdir, unlink } from "fs/promises";
 import { tmpdir } from "os";
@@ -10,13 +9,6 @@ import { eq } from "drizzle-orm";
 import { setProgress } from "@/lib/progress";
 import { extractMeetingInsights } from "@/lib/meeting-agent";
 import { sendMeetingSummaryEmail } from "@/lib/email";
-
-// Apply stealth plugin — use require to avoid ESM/CJS interop issues with Next.js
-// eslint-disable-next-line @typescript-eslint/no-require-imports
-const stealthPlugin = require("puppeteer-extra-plugin-stealth")();
-stealthPlugin.enabledEvasions.delete("iframe.contentWindow");
-stealthPlugin.enabledEvasions.delete("media.codecs");
-chromium.use(stealthPlugin);
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
@@ -112,6 +104,14 @@ export async function runMomBot({
 
   try {
     await setProgress(meetingId, 5);
+
+    // Lazy-load playwright-extra + stealth (must be outside module scope to avoid Next.js bundling)
+    const { chromium } = require("playwright-extra");
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const stealth = require("puppeteer-extra-plugin-stealth")();
+    stealth.enabledEvasions.delete("iframe.contentWindow");
+    stealth.enabledEvasions.delete("media.codecs");
+    chromium.use(stealth);
 
     // Launch with stealth-compatible args (mirrors meetingbot/meetingbot)
     browser = await chromium.launch({
