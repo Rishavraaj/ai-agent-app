@@ -169,23 +169,43 @@ export async function runMomBot({
       const seen = new Map<string, string>();
 
       const processNode = (node: Element, added: boolean) => {
-        const id = node.getAttribute("data-participant-id");
-        if (!id) {
-          node.querySelectorAll("[data-participant-id]").forEach(el => processNode(el, added));
-          return;
+        // Check the node itself
+        const id = node.getAttribute?.("data-participant-id");
+        if (id) {
+          const name = node.getAttribute("aria-label") || id;
+          if (added && !seen.has(id)) {
+            seen.set(id, name);
+            (window as any).onParticipantJoin({ id, name });
+          } else if (!added && seen.has(id)) {
+            seen.delete(id);
+            (window as any).onParticipantLeave({ id, name });
+          }
         }
-        const name = node.getAttribute("aria-label") || id;
-        if (added && !seen.has(id)) {
-          seen.set(id, name);
-          (window as any).onParticipantJoin({ id, name });
-        } else if (!added && seen.has(id)) {
-          seen.delete(id);
-          (window as any).onParticipantLeave({ id, name });
+        // Also check descendants (tile may be wrapped in a container)
+        if (node.querySelectorAll) {
+          node.querySelectorAll("[data-participant-id]").forEach((el: any) => {
+            const cid = el.getAttribute("data-participant-id");
+            const cname = el.getAttribute("aria-label") || cid;
+            if (added && !seen.has(cid)) {
+              seen.set(cid, cname);
+              (window as any).onParticipantJoin({ id: cid, name: cname });
+            } else if (!added && seen.has(cid)) {
+              seen.delete(cid);
+              (window as any).onParticipantLeave({ id: cid, name: cname });
+            }
+          });
         }
       };
 
       // Seed existing tiles
-      document.querySelectorAll("[data-participant-id]").forEach(el => processNode(el, true));
+      document.querySelectorAll("[data-participant-id]").forEach((el: any) => {
+        const id = el.getAttribute("data-participant-id");
+        const name = el.getAttribute("aria-label") || id;
+        if (!seen.has(id)) {
+          seen.set(id, name);
+          (window as any).onParticipantJoin({ id, name });
+        }
+      });
 
       // Watch entire document body for tile add/remove
       new MutationObserver(mutations => {
@@ -243,10 +263,13 @@ export async function runMomBot({
     while (true) {
       // participants.length === 1 in meetingbot means only the bot itself remains
       // our participants array only has real people, so length === 0 means alone
-      if (participants.length <= 1) {
+      if (participants.length === 0) {
+        if (!isFinite(timeAloneStarted)) timeAloneStarted = Date.now(); // safety fallback
         const msDiff = Date.now() - timeAloneStarted;
         console.log(`Only bot left. ${Math.round(msDiff / 1000)}s / ${ALONE_LEAVE_MS / 1000}s`);
         if (msDiff > ALONE_LEAVE_MS) { console.log("Everyone left — leaving."); break; }
+      } else {
+        timeAloneStarted = Infinity; // reset if someone is still there
       }
 
       // Kicked: "Return to home screen" button, hidden leave button, or removed text
