@@ -176,6 +176,14 @@ export async function runMomBot({
     // Wait for participants to render in the panel before seeding
     await page.waitForTimeout(3000);
 
+    // DEBUG: dump participants panel HTML to understand DOM structure
+    const panelDebug = await page.evaluate(() => {
+      const panel = document.querySelector('[aria-label="Participants"]');
+      if (!panel) return "PANEL NOT FOUND";
+      return panel.innerHTML.substring(0, 3000);
+    });
+    console.log("=== PARTICIPANTS PANEL HTML ===\n", panelDebug, "\n==============================");
+
     // MutationObserver on participants list — mirrors meetingbot/meetingbot
     const panelFound = await page.evaluate(() => {
       const peopleList = document.querySelector('[aria-label="Participants"]');
