@@ -143,134 +143,59 @@ export async function runMomBot({
     await setProgress(meetingId, 20);
     await db.update(meeting).set({ status: "processing" }).where(eq(meeting.id, meetingId));
 
-    // ── Participant monitoring — exact port of meetingbot/meetingbot ───────
+    // ── Participant monitoring ──────────────────────────────────────────────
+    // Google Meet renders video tiles with [data-participant-id] directly in the page
     type Participant = { id: string; name: string };
     const participants: Participant[] = [];
     let timeAloneStarted: number = Infinity;
 
-    // Open people panel — try icon click first, then aria-label button
-    try {
-      const hasPeopleIcon = await page.evaluate(() => {
-        const icon = Array.from(document.querySelectorAll("i")).find(el => el.textContent?.trim() === "people");
-        if (icon) { (icon.closest("button") as HTMLElement)?.click(); return true; }
-        return false;
-      });
-      if (!hasPeopleIcon) await page.click(PEOPLE_BTN).catch(() => {});
-      await page.waitForSelector('[aria-label="Participants"]', { state: "visible", timeout: 8000 });
-    } catch { console.warn("Participants panel not found"); }
-
-    // Wait for panel DOM to settle
-    await page.waitForTimeout(2000);
-
-    // Expose callbacks — exact signature from meetingbot/meetingbot
     await page.exposeFunction("onParticipantJoin", (participant: Participant) => {
-      participants.push(participant);
-      timeAloneStarted = Infinity;
+      if (!participants.find(p => p.id === participant.id)) {
+        participants.push(participant);
+        console.log(`Participant joined: ${participant.name} (total: ${participants.length})`);
+        timeAloneStarted = Infinity;
+      }
     });
     await page.exposeFunction("onParticipantLeave", (participant: Participant) => {
       const idx = participants.findIndex(p => p.id === participant.id);
-      if (idx !== -1) participants.splice(idx, 1);
-      timeAloneStarted = participants.length === 1 ? Date.now() : Infinity;
-    });
-
-    // DEBUG: screenshot + search for any participant-related elements
-    await page.screenshot({ path: "/tmp/mombot-debug.png" });
-    const debugHtml = await page.evaluate(() => {
-      // Try multiple possible panel selectors
-      const selectors = [
-        '[aria-label="Participants"]',
-        '[aria-label="People"]',
-        '[data-participant-id]',
-        '[jsname="ME3Aqe"]',
-        '[jsname="jV3D1"]',
-      ];
-      const results: string[] = [];
-      for (const sel of selectors) {
-        const els = document.querySelectorAll(sel);
-        if (els.length) results.push(`${sel}: ${els.length} found, first outerHTML: ${els[0].outerHTML.substring(0, 300)}`);
-        else results.push(`${sel}: NOT FOUND`);
+      if (idx !== -1) {
+        participants.splice(idx, 1);
+        console.log(`Participant left: ${participant.name} (total: ${participants.length})`);
       }
-      // Also find all elements with data-participant-id anywhere
-      const withParticipantId = document.querySelectorAll("[data-participant-id]");
-      results.push(`[data-participant-id] anywhere: ${withParticipantId.length}`);
-      if (withParticipantId.length) results.push(`first: ${withParticipantId[0].outerHTML.substring(0, 300)}`);
-      return results.join("\n");
+      if (participants.length === 0) timeAloneStarted = Date.now();
     });
-    console.log("=== DOM DEBUG ===\n", debugHtml, "\n=================");
 
-    await page.evaluate(() => {      const peopleList = document.querySelector('[aria-label="Participants"]');
-      if (!peopleList) { console.error("Could not find participants list element"); return; }
+    await page.evaluate(() => {
+      const seen = new Map<string, string>();
 
-      const initialParticipants = Array.from(peopleList.childNodes).filter(n => n.nodeType === Node.ELEMENT_NODE);
-      (window as any).participantArray = [];
-      (window as any).mergedAudioParticipantArray = [];
-
-      (window as any).handleMergedAudio = () => {
-        const mergedAudioNode = document.querySelector('[aria-label="Merged audio"]');
-        if (!mergedAudioNode) return;
-        const detectedParticipants: any[] = [];
-        mergedAudioNode.parentNode!.childNodes.forEach((childNode: any) => {
-          const participantId = childNode.getAttribute?.("data-participant-id");
-          if (!participantId) return;
-          detectedParticipants.push({ id: participantId, name: childNode.getAttribute("aria-label") });
-        });
-
-        if (detectedParticipants.length > (window as any).mergedAudioParticipantArray.length) {
-          detectedParticipants
-            .filter((p: any) => !(window as any).mergedAudioParticipantArray.find((x: any) => x.id === p.id))
-            .forEach((p: any) => {
-              (window as any).mergedAudioParticipantArray.push(p);
-              (window as any).onParticipantJoin(p);
-              (window as any).participantArray.push(p);
-            });
-        } else if (detectedParticipants.length < (window as any).mergedAudioParticipantArray.length) {
-          (window as any).mergedAudioParticipantArray
-            .filter((p: any) => !detectedParticipants.find((x: any) => x.id === p.id))
-            .forEach((p: any) => {
-              if (!document.querySelector(`[data-requested-participant-id="${p.id}"]`)) {
-                (window as any).onParticipantLeave(p);
-                (window as any).participantArray = (window as any).participantArray.filter((x: any) => x.id !== p.id);
-              }
-              (window as any).mergedAudioParticipantArray = (window as any).mergedAudioParticipantArray.filter((x: any) => x.id !== p.id);
-            });
+      const processNode = (node: Element, added: boolean) => {
+        const id = node.getAttribute("data-participant-id");
+        if (!id) {
+          node.querySelectorAll("[data-participant-id]").forEach(el => processNode(el, added));
+          return;
+        }
+        const name = node.getAttribute("aria-label") || id;
+        if (added && !seen.has(id)) {
+          seen.set(id, name);
+          (window as any).onParticipantJoin({ id, name });
+        } else if (!added && seen.has(id)) {
+          seen.delete(id);
+          (window as any).onParticipantLeave({ id, name });
         }
       };
 
-      // Seed initial participants
-      initialParticipants.forEach((node: any) => {
-        const participant = { id: node.getAttribute("data-participant-id"), name: node.getAttribute("aria-label") };
-        if (!participant.id) { (window as any).handleMergedAudio(); return; }
-        (window as any).onParticipantJoin(participant);
-        (window as any).participantArray.push(participant);
-      });
+      // Seed existing tiles
+      document.querySelectorAll("[data-participant-id]").forEach(el => processNode(el, true));
 
-      // Watch for changes
+      // Watch entire document body for tile add/remove
       new MutationObserver(mutations => {
-        mutations.forEach(mutation => {
-          mutation.removedNodes.forEach((node: any) => {
-            const id = node.getAttribute?.("data-participant-id");
-            if (id && (window as any).participantArray.find((p: any) => p.id === id)) {
-              (window as any).onParticipantLeave({ id, name: node.getAttribute("aria-label") });
-              (window as any).participantArray = (window as any).participantArray.filter((p: any) => p.id !== id);
-            } else if (document.querySelector('[aria-label="Merged audio"]')) {
-              (window as any).handleMergedAudio();
-            }
-          });
-          mutation.addedNodes.forEach((node: any) => {
-            const id = node.getAttribute?.("data-participant-id");
-            if (id && !(window as any).participantArray.find((p: any) => p.id === id)) {
-              const participant = { id, name: node.getAttribute("aria-label") };
-              (window as any).onParticipantJoin(participant);
-              (window as any).participantArray.push(participant);
-            } else if (document.querySelector('[aria-label="Merged audio"]')) {
-              (window as any).handleMergedAudio();
-            }
-          });
+        mutations.forEach(m => {
+          m.addedNodes.forEach((n: any)   => { if (n.nodeType === 1) processNode(n, true); });
+          m.removedNodes.forEach((n: any) => { if (n.nodeType === 1) processNode(n, false); });
         });
-      }).observe(peopleList, { childList: true, subtree: true });
+      }).observe(document.body, { childList: true, subtree: true });
     });
 
-    // If no one else found after seeding, start alone timer immediately
     if (participants.length === 0) timeAloneStarted = Date.now();
 
     // ── Audio capture ───────────────────────────────────────────────────────
